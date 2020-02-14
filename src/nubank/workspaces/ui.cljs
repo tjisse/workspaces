@@ -55,8 +55,8 @@
 
                           ::wsm/set-card-header-style
                           (fn [style]
-                            (comp/transact! reconciler [::wsm/card-id card-id]
-                              [`(fm/set-props {::wsm/card-header-style ~style})]))}))]
+                            (comp/transact! reconciler [`(fm/set-props {::wsm/card-header-style ~style})]
+                              {:ref [::wsm/card-id card-id]}))}))]
         (swap! data/active-cards* assoc card-id card)
         card)
       (js/console.warn "Card card-id" card-id "not found"))))
@@ -486,7 +486,8 @@
       (local-storage/set! ::active-workspace ws-ident))))
 
 (defn add-card-solo [this card-id]
-  (comp/transact! this [::workspace-tabs "singleton"] [`(open-solo-workspace ~{::wsm/card-id card-id})]))
+  (comp/transact! this [`(open-solo-workspace ~{::wsm/card-id card-id})]
+    {:ref [::workspace-tabs "singleton"]}))
 
 (defn normalize-layout [layout]
   (mapv #(-> (into {} (filter (fn [[_ v]] v)) %)
@@ -634,9 +635,10 @@
             (for [{:keys [id]} grid/breakpoints]
               (dom/option {:key id :value id} id))))
         (uc/button {:onClick #(refresh-cards (active-workspace-cards (comp/any->app this)) false)} "Refresh cards")
-        (uc/button {:onClick #(comp/transact! (comp/any->app this) [::workspace-tabs "singleton"]
+        (uc/button {:onClick #(comp/transact! (comp/any->app this)
                                 [`(create-workspace ~{::workspace-title (str workspace-title " copy")
-                                                      ::layouts         layouts})])} "Duplicate")
+                                                      ::layouts         layouts})]
+                                {:ref [::workspace-tabs "singleton"]})} "Duplicate")
         (if-not workspace-static?
           (uc/button {:onClick #(comp/transact! this [`(normalize-sizes {})])} "Unify layouts"))
         (if-not workspace-static?
@@ -883,17 +885,17 @@
   (let [{::keys [spotlight]} (comp/props this)
         state   (comp/component->state-map this)
         options (-> []
-                  (into (map (fn [[_ {::wsm/keys [card-id test?]}]]
-                               {::spotlight/type (if test? ::spotlight/test ::spotlight/card)
-                                ::spotlight/id   card-id}))
-                    (::wsm/card-id state))
-                  (into (map (fn [[_ {::keys [workspace-id workspace-title]}]]
-                               {::spotlight/type  ::spotlight/workspace
-                                ::spotlight/id    workspace-id
-                                ::spotlight/label workspace-title}))
-                    (::workspace-id state)))]
-    (comp/transact! (comp/any->app this) (comp/get-ident spotlight/Spotlight spotlight)
-      `[(spotlight/reset {::spotlight/options ~options})])
+                    (into (map (fn [[_ {::wsm/keys [card-id test?]}]]
+                                 {::spotlight/type (if test? ::spotlight/test ::spotlight/card)
+                                  ::spotlight/id   card-id}))
+                          (::wsm/card-id state))
+                    (into (map (fn [[_ {::keys [workspace-id workspace-title]}]]
+                                 {::spotlight/type  ::spotlight/workspace
+                                  ::spotlight/id    workspace-id
+                                  ::spotlight/label workspace-title}))
+                          (::workspace-id state)))]
+    (comp/transact! (comp/any->app this) `[(spotlight/reset {::spotlight/options ~options})]
+      {:ref (comp/get-ident spotlight/Spotlight spotlight)})
     (fm/set-value! this ::show-spotlight? true)))
 
 (comp/defsc HelpDialog
