@@ -3,7 +3,8 @@
   (:require
     [shadow.build :as build]
     [shadow.build.modules :as modules]
-    [shadow.build.targets.browser :as browser]))
+    [shadow.build.targets.browser :as browser]
+    [shadow.build.classpath :as cp]))
 
 (defn find-namespaces-by-regexp [{:keys [classpath] :as state} ns-regexp]
   (->> (cp/get-all-resources classpath)
