@@ -4,7 +4,7 @@
   <groupId>com.github.awkay</groupId>
   <artifactId>workspaces</artifactId>
   <packaging>jar</packaging>
-  <version>1.0.0-RC5</version>
+  <version>1.0.0</version>
   <name>workspaces</name>
   <description>Work environments for development of web apps.</description>
   <url>https://github.com/nubank/workspaces</url>
