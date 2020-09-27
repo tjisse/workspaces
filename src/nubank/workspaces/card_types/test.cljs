@@ -118,25 +118,28 @@
 
 (defmulti test-runner ::type)
 
-(defmethod test-runner ::test-one [{::keys [app* test] :as input}]
+(defmethod test-runner ::test-one [{::keys [app test] :as input}]
   (go
-    (fp/transact! (:reconciler @app*) [::test-result-id "singleton"]
+    (fp/transact! app
       [`(fm/set-props {::running?    true
                        ::enqueued?   false
-                       :test-results {}})])
+                       :test-results {}})]
+      {:ref [::test-result-id "singleton"]})
 
     (<! (async/timeout 1))
     (ui/refresh-card-container test)
     (<! (async/timeout 1))
 
     (let [res (<! (run-test-blocks input))]
-      (fp/transact! (:reconciler @app*) [::test-result-id "singleton"]
+      (fp/transact! app
         [`(fm/set-props {:test-results ~res
                          ::done?       true
-                         ::running?    false})])
+                         ::running?    false})]
+        {:ref [::test-result-id "singleton"]})
 
       (<! (async/timeout 1))
       (ui/refresh-card-container test)
+      (app/force-root-render! app)
 
       res)))
 
@@ -148,11 +151,11 @@
 (defn app-ns-test-block [app ns]
   (-> app app/current-state (get-in [::test-ns ns])))
 
-(defn build-ns-test-group [{:keys [reconciler] ::keys [test-ns ns-tests]}]
-  (let [current (app-ns-test-block reconciler test-ns)
+(defn build-ns-test-group [{:keys [app] ::keys [test-ns ns-tests]}]
+  (let [current (app-ns-test-block app test-ns)
         blocks  (mapv #(hash-map ::test-var (::wsm/card-id %)
                          :test-results nil
-                         ::disabled? (-> (app-test-block reconciler (::wsm/card-id %)) ::disabled?))
+                         ::disabled? (-> (app-test-block app (::wsm/card-id %)) ::disabled?))
                   ns-tests)]
     {::enqueued?  true
      ::running?   false
@@ -163,46 +166,54 @@
      ::test-vars  blocks}))
 
 (fm/defmutation start-ns-test-namespaces [input]
-  (action [{:keys [reconciler state ref] :as env}]
+  (action [{:keys [app state ref] :as env}]
     (let [source (get-in @state ref)]
-      (merge/merge-component! reconciler NSTestGroup
+      (merge/merge-component! app NSTestGroup
         (-> (build-ns-test-group (merge env source input))
           (assoc ::running? true ::enqueued? false))))))
 
-(defn run-ns-test-blocks [{::keys [test-ns app* ns-tests]}]
+(defn update-test-ns-state [test-ns-state state duration]
+  (let [{::keys [test-vars]} (fdn/db->tree (fp/get-query NSTestGroup) test-ns-state state)
+        success? (->> test-vars
+                      (map :test-results)
+                      (filter seq)
+                      (every? test-success?))]
+    (assoc test-ns-state
+           ::done? true
+           ::running? false
+           ::success? success?
+           ::duration duration)))
+
+(fm/defmutation set-ns-test-result [{::keys [test-ns duration]}]
+  (action [{:keys [state]}]
+    (swap! state update-in [::test-ns test-ns] update-test-ns-state @state duration)))
+
+(defn run-ns-test-blocks [{::keys [test-ns app ns-tests]}]
   (go
-    (let [app   @app*
-          start (now)]
+    (let [start (now)]
       (ui/refresh-card-container test-ns)
       (<! (async/timeout 1))
 
       (doseq [{::wsm/keys [card-id]
                ::keys     [test-forms]} ns-tests]
-        (if-not (::disabled? (app-test-block (:reconciler app) card-id))
+        (if-not (::disabled? (app-test-block app card-id))
           (let [res (<! (run-test-blocks {::test   card-id
                                           ::blocks test-forms}))]
-            (fp/transact! (:reconciler app) [::test-var card-id]
-              [`(fm/set-props {:test-results ~res ::duration ~(::duration res)})]))))
+            (fp/transact! app
+              [`(fm/set-props {:test-results ~res ::duration ~(::duration res)})]
+              {:ref [::test-var card-id]}))))
 
-      (let [state    (app/current-state app)
-            {::keys [test-vars]} (fdn/db->tree (fp/get-query NSTestGroup) (get-in state [::test-ns test-ns]) state)
-            success? (->> test-vars
-                       (map :test-results)
-                       (filter seq)
-                       (every? test-success?))
-            duration (- (now) start)]
-        (fp/transact! (:reconciler app) [::test-ns test-ns]
-          [`(fm/set-props {::done?    true
-                           ::running? false
-                           ::success? ~success?
-                           ::duration ~duration})])))))
+      (let [duration (- (now) start)]
+        (fp/transact! app
+          [`(set-ns-test-result {::test-ns ~test-ns ::duration ~duration})]
+          {:ref [::test-ns test-ns]})))))
 
-(defmethod test-runner ::test-ns [{::keys [test-ns app*] :as env}]
+(defmethod test-runner ::test-ns [{::keys [test-ns app] :as env}]
   (go
-    (let [test-cards (namespace-test-cards test-ns)
-          app        @app*]
-      (fp/transact! (:reconciler app) [::test-ns test-ns]
-        [`(start-ns-test-namespaces {::ns-tests ~test-cards})])
+    (let [test-cards (namespace-test-cards test-ns)]
+      (fp/transact! app
+        [`(start-ns-test-namespaces {::ns-tests ~test-cards})]
+        {:ref [::test-ns test-ns]})
 
       (<! (async/timeout 1))
       (<! (run-ns-test-blocks (assoc env ::ns-tests test-cards)))
@@ -216,37 +227,45 @@
 (declare AllTests)
 
 (fm/defmutation start-all-tests [{::keys [test-namespaces]}]
-  (action [{:keys [reconciler] :as env}]
+  (action [{:keys [app] :as env}]
     (let [test-namespaces (->> test-namespaces
                             (into [] (map (fn [[test-ns ns-tests]] (build-ns-test-group (merge env {::test-ns  test-ns
                                                                                                     ::ns-tests ns-tests}))))))]
-      (merge/merge-component! reconciler AllTests
+      (merge/merge-component! app AllTests
         (-> {::enqueued?       false
              ::running?        true
              ::test-namespaces test-namespaces})))))
 
-(defmethod test-runner ::test-all [{::keys [app*] :as env}]
+(defn update-all-tests-state [all-tests-state state duration]
+  (let [{::keys [test-namespaces]} (fdn/db->tree (fp/get-query AllTests) all-tests-state state)
+        success? (every? ::success? test-namespaces)]
+    (assoc all-tests-state
+           ::done? true
+           ::running? false
+           ::success? success?
+           ::duration duration)))
+
+(fm/defmutation set-all-tests-result [{::keys [duration]}]
+  (action [{:keys [state]}]
+    (swap! state update-in [::all-tests-run "singleton"] update-all-tests-state @state duration)))
+
+(defmethod test-runner ::test-all [{::keys [app] :as env}]
   (go
-    (let [app             @app*
-          test-namespaces (sort-by first (test-cards-by-namespace))
+    (let [test-namespaces (sort-by first (test-cards-by-namespace))
           start           (now)]
 
-      (fp/transact! (:reconciler app) [::all-tests-run "singleton"]
-        [`(start-all-tests {::test-namespaces ~test-namespaces})])
+      (fp/transact! app
+        [`(start-all-tests {::test-namespaces ~test-namespaces})]
+        {:ref [::all-tests-run "singleton"]})
 
       (doseq [[test-ns ns-tests] test-namespaces]
-        (if-not (::disabled? (app-ns-test-block (:reconciler app) test-ns))
+        (if-not (::disabled? (app-ns-test-block app test-ns))
           (<! (run-ns-test-blocks (assoc env ::test-ns test-ns ::ns-tests ns-tests)))))
 
-      (let [state    (app/current-state app)
-            {::keys [test-namespaces]} (fdn/db->tree (fp/get-query AllTests) (get-in state [::all-tests-run "singleton"]) state)
-            success? (every? ::success? test-namespaces)
-            duration (- (now) start)]
-        (fp/transact! (:reconciler app) [::all-tests-run "singleton"]
-          [`(fm/set-props {::done?    true
-                           ::running? false
-                           ::success? ~success?
-                           ::duration ~duration})]))
+      (let [duration (- (now) start)]
+        (fp/transact! app
+          [`(set-all-tests-result {::duration ~duration})]
+          {:ref [::all-tests-run "singleton"]}))
 
       (<! (async/timeout 1))
       (ui/refresh-card-container `test-all)
@@ -272,36 +291,36 @@
       ::enqueued? true
       ::done? false)))
 
-(defn run-card-tests! [test app*]
+(defn run-card-tests! [test app]
   (let [forms (-> (data/card-definition test) ::test-forms)
         out   (async/promise-chan)]
-    (fp/transact! (:reconciler @app*) [::test-result-id "singleton"] [`(enqueue-test-run {})])
+    (fp/transact! app [`(enqueue-test-run {})] {:ref [::test-result-id "singleton"]})
 
     (put! test-channel {::type   ::test-one
                         ::test   test
                         ::blocks forms
                         ::done   out
-                        ::app*   app*})
+                        ::app    app})
 
     out))
 
-(defn run-ns-tests! [ns app*]
+(defn run-ns-tests! [ns app]
   (let [out (async/promise-chan)]
-    (fp/transact! (:reconciler @app*) [::test-ns ns] [`(enqueue-test-run {})])
+    (fp/transact! app [`(enqueue-test-run {})] {:ref [::test-ns ns]})
 
     (put! test-channel {::type    ::test-ns
                         ::test-ns ns
                         ::done    out
-                        ::app*    app*})
+                        ::app     app})
     out))
 
-(defn run-all-tests! [app*]
+(defn run-all-tests! [app]
   (let [out (async/promise-chan)]
-    (fp/transact! (:reconciler @app*) [::all-tests-run "singleton"] [`(enqueue-test-run {})])
+    (fp/transact! app [`(enqueue-test-run {})] {:ref [::all-tests-run "singleton"]})
 
     (put! test-channel {::type ::test-all
                         ::done out
-                        ::app* app*})
+                        ::app  app})
     out))
 
 (defn header-color [{::keys [card]} bg]
@@ -431,24 +450,24 @@
           (mapv test-result summary))))))
 
 (defn test-card-init [card test]
-  (let [{::ct.fulcro/keys [app*]
+  (let [{::ct.fulcro/keys [app]
          :as              card}
         (ct.fulcro/fulcro-card-init card
           {::ct.fulcro/root SingleTest
            ::ct.fulcro/app  {:shared
                              {::card card}
 
-                             :started-callback
+                             :client-did-mount
                              (fn [app]
-                               (run-card-tests! test (atom app)))}})
+                               (run-card-tests! test app))}})
 
         run-tests
-        #(run-card-tests! test app*)]
+        #(run-card-tests! test app)]
 
     (assoc card
       ::wsm/refresh (fn [_] (run-tests))
       ::wsm/render-toolbar (fn []
-                             (let [state (app/current-state @app*)
+                             (let [state (app/current-state app)
 
                                    {::keys [running? done?]
                                     :keys  [test-results]}
@@ -625,7 +644,7 @@
 (ct.fulcro/add-component-css! AllTests)
 
 (defn test-ns-card-init [card test-ns]
-  (let [{::ct.fulcro/keys [app*]
+  (let [{::ct.fulcro/keys [app]
          :as              card}
         (ct.fulcro/fulcro-card-init card
           {::ct.fulcro/root          NSTestGroup
@@ -633,17 +652,17 @@
            ::ct.fulcro/app           {:shared
                                       {::card card}
 
-                                      :started-callback
+                                      :client-did-mount
                                       (fn [app]
-                                        (run-ns-tests! test-ns (atom app)))}})
+                                        (run-ns-tests! test-ns app))}})
 
         run-tests
-        #(run-ns-tests! test-ns app*)]
+        #(run-ns-tests! test-ns app)]
 
     (assoc card
       ::wsm/refresh (fn [_] (run-tests))
       ::wsm/render-toolbar (fn []
-                             (let [state (app/current-state @app*)
+                             (let [state (app/current-state app)
 
                                    {::keys [running? done? duration]}
                                    (get-in state [::test-ns test-ns])]
@@ -669,24 +688,24 @@
    ::wsm/card-height    15})
 
 (defn all-tests-card-init [card]
-  (let [{::ct.fulcro/keys [app*]
+  (let [{::ct.fulcro/keys [app]
          :as              card}
         (ct.fulcro/fulcro-card-init card
           {::ct.fulcro/root AllTests
            ::ct.fulcro/app  {:shared
                              {::card card}
 
-                             :started-callback
+                             :client-did-mount
                              (fn [app]
-                               (run-all-tests! (atom app)))}})
+                               (run-all-tests! app))}})
 
         run-tests
-        #(run-all-tests! app*)]
+        #(run-all-tests! app)]
 
     (assoc card
       ::wsm/refresh (fn [_] (run-tests))
       ::wsm/render-toolbar (fn []
-                             (let [state (app/current-state @app*)
+                             (let [state (app/current-state app)
                                    {::keys [running? done? duration]}
                                    (get-in state [::all-tests-run "singleton"])]
                                (dom/div {:style {:flex       "1"
