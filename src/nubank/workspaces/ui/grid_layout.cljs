@@ -3,7 +3,7 @@
             [com.fulcrologic.fulcro-css.localized-dom :as dom]
             [garden.selectors :as gs]
             [goog.object :as gobj]
-            [cljsjs.react-grid-layout]
+            ["react-grid-layout" :refer [WidthProvider Responsive]]
             [nubank.workspaces.ui.core :as uc]))
 
 (def column-size 120)
@@ -22,9 +22,6 @@
   [:$react-grid-item
    [(gs/& (gs/not :.react-grid-placeholder))
     props]])
-
-(def WidthProvider js/ReactGridLayout.WidthProvider)
-(def Responsive js/ReactGridLayout.Responsive)
 
 (def GridWithWidth (WidthProvider Responsive))
 

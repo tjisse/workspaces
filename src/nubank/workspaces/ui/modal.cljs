@@ -33,7 +33,7 @@
    :componentWillUnmount
    (fn [this]
      (when-let [node (gobj/get this "node")]
-       (js/ReactDOM.unmountComponentAtNode node)
+       (.unmount node)
        (gdom/removeNode node)))
 
    :componentWillReceiveProps

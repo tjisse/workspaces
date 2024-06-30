@@ -1,3 +1,3 @@
 {:npm-deps
- {:react-grid-layout "^0.16.6"
-  :highlight.js      "^9.12.0"}}
+ {:react-grid-layout "^1.4.1"
+  :highlight.js      "^11.9.0"}}
