@@ -1,54 +1,8 @@
 (ns nubank.workspaces.ui.modal
-  (:require [goog.dom :as gdom]
-            [goog.object :as gobj]
-            [goog.style :as style]
+  (:require ["react-dom" :refer [createPortal]]
             [com.fulcrologic.fulcro-css.localized-dom :as dom]
             [com.fulcrologic.fulcro.components :as fp]
             [nubank.workspaces.ui.events :as events]))
-
-(defn render-subtree-into-container [parent c node]
-  (js/ReactDOM.unstable_renderSubtreeIntoContainer parent c node))
-
-(defn $ [s] (.querySelector js/document s))
-
-(defn create-portal-node [props]
-  (let [node (doto (gdom/createElement "div")
-               (style/setStyle (clj->js (:style props))))]
-    (cond
-      (:append-to props) (gdom/append ($ (:append-to props)) node)
-      (:insert-after props) (gdom/insertSiblingAfter node ($ (:insert-after props))))
-    node))
-
-(defn portal-render-children [children]
-  (apply dom/div nil children))
-
-(fp/defsc Portal [this _]
-  {:componentDidMount
-   (fn [this]
-     (let [props (fp/props this)
-           node  (create-portal-node props)]
-       (gobj/set this "node" node)
-       (render-subtree-into-container this (portal-render-children (fp/children this)) node)))
-
-   :componentWillUnmount
-   (fn [this]
-     (when-let [node (gobj/get this "node")]
-       (.unmount node)
-       (gdom/removeNode node)))
-
-   :componentWillReceiveProps
-   (fn [this _]
-     (let [node (gobj/get this "node")]
-       (render-subtree-into-container this (portal-render-children (fp/children this)) node)))
-
-   :componentDidUpdate
-   (fn [this _ _]
-     (let [node (gobj/get this "node")]
-       (render-subtree-into-container this (portal-render-children (fp/children this)) node)))}
-
-  (dom/noscript))
-
-(def portal (fp/factory Portal))
 
 (fp/defsc WidgetContent [this props]
   {:css [[:.container {:max-height "70vh"
@@ -81,14 +35,15 @@
                            :font-size      "10px"
                            :text-transform "uppercase"}]]
    :css-include [WidgetContent]}
-  (portal {:append-to "body"}
-    (events/dom-listener {::events/keystroke "escape"
-                          ::events/action    on-close})
-    (dom/div :.background {:onClick (fn [e]
-                                      (if (= (.-currentTarget e) (.-target e))
-                                        (on-close e)))}
-      (dom/div :.container
-        (dom/div
-          (fp/children this))))))
+  (createPortal
+    (dom/div
+      (events/dom-listener {::events/keystroke "escape"
+                            ::events/action    on-close})
+      (dom/div :.background {:onClick (fn [e]
+                                        (if (= (.-currentTarget e) (.-target e))
+                                          (on-close e)))}
+               (dom/div :.container
+                        (dom/div
+                          (fp/children this))))) js/document.body))
 
 (def modal (fp/factory Modal))
